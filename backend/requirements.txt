@@ -1,0 +1,12 @@
+deepagents
+langgraph
+langchain
+langchain-groq
+tavily-python
+fastapi
+python-multipart
+uvicorn
+streamlit
+python-dotenv
+pypdf
+python-multipart
