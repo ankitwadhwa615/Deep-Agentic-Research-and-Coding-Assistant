@@ -2,13 +2,19 @@ import logging
 import json
 from uuid import uuid4
 from pathlib import Path
+from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from graph import agent
 from groq import APIStatusError, RateLimitError
 from pydantic import BaseModel, Field
 from tools.file_tool import UPLOADS_DIRECTORY
+from database import connection, initialize_database, utc_now
+from security import create_access_token, decode_access_token, hash_password, verify_password
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -16,6 +22,56 @@ class ChatRequest(BaseModel):
     query: str = Field(min_length=1, max_length=10000)
     session_id: str = Field(default_factory=lambda: str(uuid4()))
     file_id: str | None = None
+
+class RegisterRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+class UpdatePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+def current_user(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]):
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication is required.")
+    payload = decode_access_token(credentials.credentials)
+    with connection() as db:
+        user = db.execute("SELECT id, email, name FROM users WHERE id = ?", (payload["sub"],)).fetchone()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account no longer exists.")
+    return dict(user)
+
+def ensure_session(user_id: str, session_id: str, title: str | None = None) -> None:
+    now = utc_now()
+    with connection() as db:
+        existing = db.execute("SELECT user_id FROM chat_sessions WHERE id = ?", (session_id,)).fetchone()
+        if existing and existing["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="This chat session belongs to another user.")
+        if existing:
+            db.execute("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", (now, session_id))
+        else:
+            db.execute("INSERT INTO chat_sessions (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", (session_id, user_id, title or "New chat", now, now))
+
+def require_session(user_id: str, session_id: str) -> None:
+    with connection() as db:
+        session = db.execute("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?", (session_id, user_id)).fetchone()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found.")
+
+def save_message(user_id: str, session_id: str, role: str, content: str) -> None:
+    if not content:
+        return
+    now = utc_now()
+    with connection() as db:
+        db.execute("INSERT INTO chat_messages (id, session_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)", (str(uuid4()), session_id, user_id, role, content, now))
+        db.execute("UPDATE chat_sessions SET updated_at = ?, title = CASE WHEN title = 'New chat' THEN ? ELSE title END WHERE id = ?", (now, content[:80], session_id))
 
 def get_delegated_agents(messages):
     agents = []
@@ -56,13 +112,57 @@ def build_message(request):
         "use read_uploaded_file before answering."
     )
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_database()
+    yield
+
 app = FastAPI(
     title="Deep Agentic Research Assistant",
-    version="1.0.0"
+    version="1.1.0",
+    lifespan=lifespan
 )
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+@app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+def register(request: RegisterRequest):
+    email = request.email.strip().lower()
+    name = request.name.strip()
+    if "@" not in email or not name:
+        raise HTTPException(status_code=422, detail="A name and valid email address are required.")
+    user_id, now = str(uuid4()), utc_now()
+    try:
+        with connection() as db:
+            db.execute("INSERT INTO users (id, email, name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", (user_id, email, name, hash_password(request.password), now, now))
+    except Exception as error:
+        if "UNIQUE constraint failed" in str(error):
+            raise HTTPException(status_code=409, detail="An account with this email already exists.") from error
+        raise
+    return {"access_token": create_access_token(user_id, email), "token_type": "bearer", "user": {"id": user_id, "name": name, "email": email}}
+
+@app.post("/auth/login")
+def login(request: LoginRequest):
+    email = request.email.strip().lower()
+    with connection() as db:
+        user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    if user is None or not verify_password(request.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+    return {"access_token": create_access_token(user["id"], user["email"]), "token_type": "bearer", "user": {"id": user["id"], "name": user["name"], "email": user["email"]}}
+
+@app.get("/auth/me")
+def me(user: Annotated[dict, Depends(current_user)]):
+    return {"user": user}
+
+@app.patch("/auth/password", status_code=status.HTTP_204_NO_CONTENT)
+def update_password(request: UpdatePasswordRequest, user: Annotated[dict, Depends(current_user)]):
+    with connection() as db:
+        row = db.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
+        if row is None or not verify_password(request.current_password, row["password_hash"]):
+            raise HTTPException(status_code=400, detail="Your current password is incorrect.")
+        db.execute("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", (hash_password(request.new_password), utc_now(), user["id"]))
+
+@app.post("/upload", status_code=status.HTTP_201_CREATED)
+async def upload_file(user: Annotated[dict, Depends(current_user)], file: UploadFile = File(...)):
     filename = Path(file.filename or "").name
 
     if not filename:
@@ -73,6 +173,9 @@ async def upload_file(file: UploadFile = File(...)):
 
     with file_path.open("wb") as f:
         f.write(await file.read())
+
+    with connection() as db:
+        db.execute("INSERT INTO uploads (id, user_id, filename, created_at) VALUES (?, ?, ?, ?)", (file_id, user["id"], filename, utc_now()))
 
     return {
         "filename": filename,
@@ -91,10 +194,43 @@ def health():
         "status": "healthy"
     }
 
+@app.get("/chat/sessions")
+def list_chat_sessions(user: Annotated[dict, Depends(current_user)]):
+    with connection() as db:
+        sessions = db.execute(
+            "SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC",
+            (user["id"],),
+        ).fetchall()
+    return {"sessions": [dict(item) for item in sessions]}
+
+@app.get("/chat/sessions/{session_id}/history")
+def chat_history(session_id: str, user: Annotated[dict, Depends(current_user)]):
+    require_session(user["id"], session_id)
+    with connection() as db:
+        messages = db.execute(
+            "SELECT id, role, content, created_at FROM chat_messages WHERE session_id = ? AND user_id = ? ORDER BY created_at ASC",
+            (session_id, user["id"]),
+        ).fetchall()
+    return {"session_id": session_id, "messages": [dict(item) for item in messages]}
+
+@app.delete("/chat/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_chat_session(session_id: str, user: Annotated[dict, Depends(current_user)]):
+    with connection() as db:
+        deleted = db.execute("DELETE FROM chat_sessions WHERE id = ? AND user_id = ?", (session_id, user["id"])).rowcount
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Chat session not found.")
+
 @app.post("/chat")
 @app.post("/chat/")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, user: Annotated[dict, Depends(current_user)]):
     logger.info("Processing chat request")
+    ensure_session(user["id"], request.session_id, request.query)
+    if request.file_id:
+        with connection() as db:
+            upload = db.execute("SELECT id FROM uploads WHERE id = ? AND user_id = ?", (Path(request.file_id).name, user["id"])).fetchone()
+        if upload is None:
+            raise HTTPException(status_code=403, detail="Uploaded file not found or does not belong to you.")
+    save_message(user["id"], request.session_id, "user", request.query)
 
     try:
         result = await agent.ainvoke(
@@ -108,7 +244,7 @@ async def chat(request: ChatRequest):
             },
             config={
                 "configurable": {
-                    "thread_id": request.session_id
+                    "thread_id": f"{user['id']}:{request.session_id}"
                 }
             }
         )
@@ -135,15 +271,24 @@ async def chat(request: ChatRequest):
     else:
         logger.warning("No subagent delegation recorded")
 
-    return {
-        "response": result["messages"][-1].content
-    }
+    response = get_text(result["messages"][-1].content) or str(result["messages"][-1].content)
+    save_message(user["id"], request.session_id, "assistant", response)
+    return {"session_id": request.session_id, "response": response}
 
 @app.post("/chat/stream")
 @app.post("/chat/stream/")
-async def stream_chat(request: ChatRequest):
+async def stream_chat(request: ChatRequest, user: Annotated[dict, Depends(current_user)]):
+    ensure_session(user["id"], request.session_id, request.query)
+    if request.file_id:
+        with connection() as db:
+            upload = db.execute("SELECT id FROM uploads WHERE id = ? AND user_id = ?", (Path(request.file_id).name, user["id"])).fetchone()
+        if upload is None:
+            raise HTTPException(status_code=403, detail="Uploaded file not found or does not belong to you.")
+    save_message(user["id"], request.session_id, "user", request.query)
+
     async def generate():
         agents = []
+        response_parts = []
 
         try:
             async for chunk in agent.astream(
@@ -157,7 +302,7 @@ async def stream_chat(request: ChatRequest):
                 },
                 config={
                     "configurable": {
-                        "thread_id": request.session_id
+                        "thread_id": f"{user['id']}:{request.session_id}"
                     }
                 },
                 stream_mode=["messages", "updates"],
@@ -172,6 +317,8 @@ async def stream_chat(request: ChatRequest):
                     ) else "main"
 
                     if content:
+                        if source == "main":
+                            response_parts.append(content)
                         yield format_event("token", {
                             "content": content,
                             "source": source
@@ -191,6 +338,7 @@ async def stream_chat(request: ChatRequest):
                                 })
 
             logger.info("Streaming request completed")
+            save_message(user["id"], request.session_id, "assistant", "".join(response_parts))
             yield format_event("complete", {"agents": agents})
         except RateLimitError as error:
             logger.warning("Groq rate limit reached: %s", error)
