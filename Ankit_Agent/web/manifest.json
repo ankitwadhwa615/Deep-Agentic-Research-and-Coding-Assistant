@@ -1,12 +1,12 @@
 {
-    "name": "ankit_agent",
-    "short_name": "ankit_agent",
+    "name": "Ankit's Agent",
+    "short_name": "Ankit's Agent",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
+    "background_color": "#111816",
+    "theme_color": "#111816",
     "description": "Developed a Flutter-based AI assistant application that enables conversational research, code generation, document analysis, and multi-turn interactions using LangGraph agents, FastAPI backend, and large language models with streaming support.",
-    "orientation": "portrait-primary",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

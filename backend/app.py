@@ -1,5 +1,6 @@
 import logging
 import json
+import os
 from uuid import uuid4
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -122,7 +123,16 @@ app = FastAPI(
     version="1.1.0",
     lifespan=lifespan
 )
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    # The app uses bearer tokens rather than cookies. Allow web deployments
+    # from any HTTP(S) origin; restrict this with CORS_ORIGIN_REGEX in production
+    # if the frontend domain is known.
+    allow_origin_regex=os.getenv("CORS_ORIGIN_REGEX", r"https?://.+"),
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/auth/register", status_code=status.HTTP_201_CREATED)
 def register(request: RegisterRequest):
