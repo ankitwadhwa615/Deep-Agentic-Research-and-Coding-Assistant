@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 class UserProfile {
   const UserProfile(
       {required this.id, required this.name, required this.email});
@@ -16,10 +18,13 @@ class AuthResult {
 }
 
 class ChatMessage {
-  ChatMessage(this.role, this.content, {this.streaming = false});
+  ChatMessage(this.role, this.content,
+      {this.streaming = false, this.attachmentBytes, this.attachmentName});
   final String role;
   String content;
   bool streaming;
+  final Uint8List? attachmentBytes;
+  final String? attachmentName;
 }
 
 class ChatSession {

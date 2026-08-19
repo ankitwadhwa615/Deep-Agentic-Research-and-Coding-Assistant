@@ -37,6 +37,17 @@ class AuthController extends ChangeNotifier {
       _authenticate(() => _api.login(email, password));
   Future<String?> register(String name, String email, String password) =>
       _authenticate(() => _api.register(name, email, password));
+  Future<String?> forgotPassword(String email, String password) async {
+    try {
+      await _api.forgotPassword(email, password);
+      return null;
+    } on ApiException catch (error) {
+      return error.message;
+    } catch (_) {
+      return 'Could not reach the agent service. Check the server address.';
+    }
+  }
+
   Future<String?> _authenticate(Future<AuthResult> Function() call) async {
     submitting = true;
     notifyListeners();

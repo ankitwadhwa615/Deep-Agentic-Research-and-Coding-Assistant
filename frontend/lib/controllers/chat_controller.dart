@@ -13,8 +13,9 @@ class ChatController extends ChangeNotifier {
   String? sessionId, activeAgent;
   bool loading = false, streaming = false, uploading = false;
   UploadedAttachment? attachment;
+  Uint8List? attachmentBytes;
   String _newId() =>
-      '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}-${Random.secure().nextInt(1 << 32).toRadixString(16)}';
+      '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}-${Random.secure().nextInt(0xFFFFFFFF).toRadixString(16)}';
   Future<void> loadSessions() async {
     if (_auth.token == null) return;
     try {
@@ -28,6 +29,7 @@ class ChatController extends ChangeNotifier {
     messages = [];
     activeAgent = null;
     attachment = null;
+    attachmentBytes = null;
     notifyListeners();
   }
 
@@ -36,6 +38,7 @@ class ChatController extends ChangeNotifier {
     uploading = true;
     notifyListeners();
     try {
+      attachmentBytes = bytes;
       attachment = await _api.upload(_auth.token!, bytes, filename);
       return null;
     } on ApiException catch (error) {
@@ -50,6 +53,7 @@ class ChatController extends ChangeNotifier {
 
   void clearAttachment() {
     attachment = null;
+    attachmentBytes = null;
     notifyListeners();
   }
 
@@ -67,18 +71,29 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> send(String query) async {
-    if (query.trim().isEmpty || streaming || _auth.token == null) return;
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.isEmpty || streaming) return;
     sessionId ??= _newId();
-    messages.add(ChatMessage('user', query.trim()));
+    final userMessage = ChatMessage('user', trimmedQuery,
+        attachmentBytes: attachmentBytes, attachmentName: attachment?.filename);
+    messages = [...messages, userMessage];
+    if (_auth.token == null) {
+      messages = [
+        ...messages,
+        ChatMessage('assistant', 'Please sign in before sending a message.')
+      ];
+      notifyListeners();
+      return;
+    }
     final reply = ChatMessage('assistant', '', streaming: true);
-    messages.add(reply);
+    messages = [...messages, reply];
     streaming = true;
     activeAgent = null;
     notifyListeners();
     var sent = false;
     try {
       await for (final event in _api.streamChat(
-          _auth.token!, query.trim(), sessionId!, attachment?.fileId)) {
+          _auth.token!, trimmedQuery, sessionId!, attachment?.fileId)) {
         if (event.type == 'token' && event.data['source'] == 'main')
           reply.content += event.data['content'] as String? ?? '';
         if (event.type == 'delegation')
@@ -86,6 +101,7 @@ class ChatController extends ChangeNotifier {
         if (event.type == 'error')
           throw ApiException(
               event.data['detail'] as String? ?? 'The request failed.');
+        messages = [...messages];
         notifyListeners();
       }
       reply.streaming = false;
@@ -104,7 +120,8 @@ class ChatController extends ChangeNotifier {
     } finally {
       streaming = false;
       activeAgent = null;
-      if (sent) attachment = null;
+      attachment = null;
+      attachmentBytes = null;
       notifyListeners();
     }
   }

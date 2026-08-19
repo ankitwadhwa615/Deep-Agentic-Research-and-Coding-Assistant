@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/models.dart';
 
@@ -40,6 +41,12 @@ class ApiClient {
         UserProfile.fromJson(body['user'] as Map<String, dynamic>));
   }
 
+  Future<void> forgotPassword(String email, String newPassword) async {
+    await _json(await _client.post(_uri('/auth/forgot-password'),
+        headers: _headers(),
+        body: jsonEncode({'email': email, 'new_password': newPassword})));
+  }
+
   Future<UserProfile> me(String token) async {
     final body = await _json(
         await _client.get(_uri('/auth/me'), headers: _headers(token)));
@@ -65,6 +72,21 @@ class ApiClient {
 
   Stream<ApiEvent> streamChat(
       String token, String query, String session, String? fileId) async* {
+    if (kIsWeb) {
+      final body = await _json(await _client.post(_uri('/chat'),
+          headers: _headers(token),
+          body: jsonEncode({
+            'query': query,
+            'session_id': session,
+            if (fileId != null) 'file_id': fileId
+          })));
+      yield ApiEvent('token', {
+        'source': 'main',
+        'content': body['response'] as String? ?? '',
+      });
+      yield const ApiEvent('complete', {});
+      return;
+    }
     final request = http.Request('POST', _uri('/chat/stream'))
       ..headers.addAll(_headers(token))
       ..body = jsonEncode({

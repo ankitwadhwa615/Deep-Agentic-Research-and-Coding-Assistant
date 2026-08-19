@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -50,6 +51,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _pickPhoto() async {
+    if (kIsWeb) {
+      final result = await FilePicker.platform
+          .pickFiles(type: FileType.image, withData: true);
+      if (result == null) return;
+      final file = result.files.single;
+      if (file.bytes == null) {
+        return _error('The selected image could not be read.');
+      }
+      return _upload(file.bytes!, file.name);
+    }
     final photo = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (photo != null) await _upload(await photo.readAsBytes(), photo.name);
   }
@@ -219,6 +230,63 @@ class _AgentStatus extends StatelessWidget {
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({required this.message});
   final ChatMessage message;
+
+  bool get _isImageAttachment {
+    final name = message.attachmentName?.toLowerCase() ?? '';
+    return const ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
+        .any(name.endsWith);
+  }
+
+  TextSpan _formattedText(BuildContext context) {
+    final baseStyle = const TextStyle(height: 1.45);
+    final headingStyle = baseStyle.copyWith(
+        fontSize: 18, fontWeight: FontWeight.w700, height: 1.35);
+    final boldStyle = baseStyle.copyWith(fontWeight: FontWeight.w700);
+    final spans = <TextSpan>[];
+    final lines = message.content.split('\n');
+    for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      final line = lines[lineIndex];
+      final heading = RegExp(r'^#{1,6}\s+(.*)$').firstMatch(line);
+      if (heading != null) {
+        spans.add(TextSpan(text: heading.group(1), style: headingStyle));
+      } else if (RegExp(r'^\s*([-*_]\s*){3,}$').hasMatch(line)) {
+        spans.add(TextSpan(
+            text: '────────────────────',
+            style: baseStyle.copyWith(color: Colors.white38)));
+      } else {
+        final bullet = RegExp(r'^(\s*)\*\s+(.*)$').firstMatch(line);
+        final formattedLine =
+            bullet == null ? line : '${bullet.group(1)}• ${bullet.group(2)}';
+        final markdown = RegExp(r'(\*\*[^*]+\*\*|\*[^*]+\*)');
+        var cursor = 0;
+        for (final match in markdown.allMatches(formattedLine)) {
+          if (match.start > cursor) {
+            spans.add(TextSpan(
+                text: formattedLine.substring(cursor, match.start),
+                style: baseStyle));
+          }
+          final token = match.group(0)!;
+          final isBold = token.startsWith('**');
+          spans.add(TextSpan(
+              text: token.substring(
+                  isBold ? 2 : 1, token.length - (isBold ? 2 : 1)),
+              style: isBold
+                  ? boldStyle
+                  : baseStyle.copyWith(fontStyle: FontStyle.italic)));
+          cursor = match.end;
+        }
+        if (cursor < formattedLine.length) {
+          spans.add(TextSpan(
+              text: formattedLine.substring(cursor), style: baseStyle));
+        }
+      }
+      if (lineIndex < lines.length - 1) {
+        spans.add(const TextSpan(text: '\n'));
+      }
+    }
+    return TextSpan(children: spans, style: baseStyle);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == 'user';
@@ -243,11 +311,37 @@ class _MessageBubble extends StatelessWidget {
                         border: !isUser
                             ? Border.all(color: const Color(0xFF2B3933))
                             : null),
-                    child: SelectableText(
-                        message.content.isEmpty && message.streaming
-                            ? 'Thinking…'
-                            : message.content,
-                        style: const TextStyle(height: 1.45))))));
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (message.attachmentBytes != null &&
+                              _isImageAttachment)
+                            ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.memory(message.attachmentBytes!,
+                                    width: 280,
+                                    height: 220,
+                                    fit: BoxFit.cover)),
+                          if (message.attachmentBytes != null &&
+                              !_isImageAttachment)
+                            Row(children: [
+                              const Icon(Icons.attach_file, size: 18),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                  child: Text(message.attachmentName ??
+                                      'Attached file'))
+                            ]),
+                          if (message.attachmentBytes != null &&
+                              _isImageAttachment &&
+                              message.content.isNotEmpty)
+                            const SizedBox(height: 10),
+                          SelectableText.rich(
+                              message.content.isEmpty && message.streaming
+                                  ? const TextSpan(
+                                      text: 'Thinking…',
+                                      style: TextStyle(height: 1.45))
+                                  : _formattedText(context))
+                        ])))));
   }
 }
 

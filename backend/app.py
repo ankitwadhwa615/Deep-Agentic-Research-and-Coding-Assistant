@@ -1,5 +1,7 @@
+import base64
 import logging
 import json
+import mimetypes
 import os
 from uuid import uuid4
 from pathlib import Path
@@ -10,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from graph import agent
+from graph import agent, model
 from groq import APIStatusError, RateLimitError
 from pydantic import BaseModel, Field
 from tools.file_tool import UPLOADS_DIRECTORY
@@ -35,6 +37,10 @@ class LoginRequest(BaseModel):
 
 class UpdatePasswordRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
     new_password: str = Field(min_length=8, max_length=128)
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -106,12 +112,29 @@ def build_message(request):
         return request.query
 
     file_id = Path(request.file_id).name
+    file_path = UPLOADS_DIRECTORY / file_id
+    mime_type, _ = mimetypes.guess_type(file_path.name)
+    if mime_type and mime_type.startswith("image/"):
+        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+        return [
+            {"type": "text", "text": request.query},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+            },
+        ]
     return (
         f"{request.query}\n\n"
         f"An uploaded file is available with file_id: {file_id}. "
         "Delegate this request to the appropriate specialist and instruct it to "
         "use read_uploaded_file before answering."
     )
+
+def is_image_request(request):
+    if not request.file_id:
+        return False
+    mime_type, _ = mimetypes.guess_type(Path(request.file_id).name)
+    return bool(mime_type and mime_type.startswith("image/"))
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -158,6 +181,16 @@ def login(request: LoginRequest):
     if user is None or not verify_password(request.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
     return {"access_token": create_access_token(user["id"], user["email"]), "token_type": "bearer", "user": {"id": user["id"], "name": user["name"], "email": user["email"]}}
+
+@app.post("/auth/forgot-password")
+def forgot_password(request: ForgotPasswordRequest):
+    email = request.email.strip().lower()
+    with connection() as db:
+        user = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+        if user is None:
+            raise HTTPException(status_code=404, detail="No account was found for that email.")
+        db.execute("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", (hash_password(request.new_password), utc_now(), user["id"]))
+    return {"message": "Password updated successfully."}
 
 @app.get("/auth/me")
 def me(user: Annotated[dict, Depends(current_user)]):
@@ -243,6 +276,14 @@ async def chat(request: ChatRequest, user: Annotated[dict, Depends(current_user)
     save_message(user["id"], request.session_id, "user", request.query)
 
     try:
+        if is_image_request(request):
+            result = await model.ainvoke(
+                {"messages": [{"role": "user", "content": build_message(request)}]}
+            )
+            response = get_text(result.content) or str(result.content)
+            save_message(user["id"], request.session_id, "assistant", response)
+            return {"session_id": request.session_id, "response": response}
+
         result = await agent.ainvoke(
             {
                 "messages": [
@@ -272,9 +313,9 @@ async def chat(request: ChatRequest, user: Annotated[dict, Depends(current_user)
         ) from error
     except Exception as error:
         logger.exception("Agent request failed")
-        raise HTTPException(status_code=500, detail="Unable to process the request.") from error
+        raise HTTPException(status_code=500, detail=f"Unable to process the request: {error}") from error
 
-    agents = get_delegated_agents(result["messages"])
+    agents = [] if is_image_request(request) else get_delegated_agents(result["messages"])
 
     if agents:
         logger.info("Delegated to subagent(s): %s", ", ".join(agents))
@@ -301,6 +342,13 @@ async def stream_chat(request: ChatRequest, user: Annotated[dict, Depends(curren
         response_parts = []
 
         try:
+            if is_image_request(request):
+                result = await model.ainvoke({"messages": [{"role": "user", "content": build_message(request)}]})
+                response = get_text(result.content) or str(result.content)
+                save_message(user["id"], request.session_id, "assistant", response)
+                yield format_event("token", {"content": response, "source": "main"})
+                yield format_event("complete", {"agents": []})
+                return
             async for chunk in agent.astream(
                 {
                     "messages": [
