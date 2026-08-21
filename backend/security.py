@@ -12,6 +12,8 @@ from fastapi import HTTPException, status
 _SECRET = os.getenv("JWT_SECRET") or secrets.token_urlsafe(48)
 # Set JWT_SECRET in the deployment environment so access tokens survive restarts.
 _ALGORITHM = "HS256"
+_ACCESS_TOKEN_EXPIRES_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRES_MINUTES", "15"))
+_REFRESH_TOKEN_EXPIRES_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRES_DAYS", "30"))
 
 
 def hash_password(password: str) -> str:
@@ -43,10 +45,22 @@ def _decode(value: str) -> bytes:
 
 def create_access_token(user_id: str, email: str) -> str:
     header = _encode(json.dumps({"alg": _ALGORITHM, "typ": "JWT"}, separators=(",", ":")).encode())
-    expires = datetime.now(timezone.utc) + timedelta(hours=24)
+    expires = datetime.now(timezone.utc) + timedelta(minutes=_ACCESS_TOKEN_EXPIRES_MINUTES)
     payload = _encode(json.dumps({"sub": user_id, "email": email, "exp": int(expires.timestamp())}, separators=(",", ":")).encode())
     signature = _encode(hmac.new(_SECRET.encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest())
     return f"{header}.{payload}.{signature}"
+
+
+def create_refresh_token() -> tuple[str, int]:
+    """Create an opaque refresh token and its Unix expiry timestamp."""
+    token = secrets.token_urlsafe(48)
+    expires = datetime.now(timezone.utc) + timedelta(days=_REFRESH_TOKEN_EXPIRES_DAYS)
+    return token, int(expires.timestamp())
+
+
+def hash_refresh_token(token: str) -> str:
+    """Store only a keyed digest, never the usable refresh token itself."""
+    return hmac.new(_SECRET.encode(), token.encode(), hashlib.sha256).hexdigest()
 
 
 def decode_access_token(token: str) -> dict:

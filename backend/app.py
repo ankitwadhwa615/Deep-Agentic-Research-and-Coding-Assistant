@@ -3,6 +3,7 @@ import logging
 import json
 import mimetypes
 import os
+import time
 from uuid import uuid4
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -17,7 +18,8 @@ from groq import APIStatusError, RateLimitError
 from pydantic import BaseModel, Field
 from tools.file_tool import UPLOADS_DIRECTORY
 from database import connection, initialize_database, utc_now
-from security import create_access_token, decode_access_token, hash_password, verify_password
+from security import (create_access_token, create_refresh_token, decode_access_token,
+                      hash_password, hash_refresh_token, verify_password)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -43,7 +45,25 @@ class ForgotPasswordRequest(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     new_password: str = Field(min_length=8, max_length=128)
 
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, max_length=512)
+
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def issue_token_pair(user_id: str, email: str) -> dict:
+    refresh_token, expires_at = create_refresh_token()
+    with connection() as db:
+        db.execute("DELETE FROM refresh_tokens WHERE expires_at < ?", (int(time.time()),))
+        db.execute(
+            "INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+            (hash_refresh_token(refresh_token), user_id, expires_at, utc_now()),
+        )
+    return {
+        "access_token": create_access_token(user_id, email),
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 def current_user(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]):
     if credentials is None:
@@ -171,7 +191,7 @@ def register(request: RegisterRequest):
         if "UNIQUE constraint failed" in str(error):
             raise HTTPException(status_code=409, detail="An account with this email already exists.") from error
         raise
-    return {"access_token": create_access_token(user_id, email), "token_type": "bearer", "user": {"id": user_id, "name": name, "email": email}}
+    return {**issue_token_pair(user_id, email), "user": {"id": user_id, "name": name, "email": email}}
 
 @app.post("/auth/login")
 def login(request: LoginRequest):
@@ -180,7 +200,26 @@ def login(request: LoginRequest):
         user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     if user is None or not verify_password(request.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
-    return {"access_token": create_access_token(user["id"], user["email"]), "token_type": "bearer", "user": {"id": user["id"], "name": user["name"], "email": user["email"]}}
+    return {**issue_token_pair(user["id"], user["email"]), "user": {"id": user["id"], "name": user["name"], "email": user["email"]}}
+
+
+@app.post("/auth/refresh")
+def refresh(request: RefreshRequest):
+    token_hash = hash_refresh_token(request.refresh_token)
+    now_timestamp = int(time.time())
+    with connection() as db:
+        row = db.execute(
+            "SELECT user_id FROM refresh_tokens WHERE token_hash = ? AND expires_at >= ?",
+            (token_hash, now_timestamp),
+        ).fetchone()
+        # Rotation makes a stolen token unusable after its first use.
+        db.execute("DELETE FROM refresh_tokens WHERE token_hash = ?", (token_hash,))
+        if row is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token.")
+        user = db.execute("SELECT id, email, name FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+        if user is None:
+            raise HTTPException(status_code=401, detail="User account no longer exists.")
+    return {**issue_token_pair(user["id"], user["email"]), "user": dict(user)}
 
 @app.post("/auth/forgot-password")
 def forgot_password(request: ForgotPasswordRequest):
@@ -190,6 +229,7 @@ def forgot_password(request: ForgotPasswordRequest):
         if user is None:
             raise HTTPException(status_code=404, detail="No account was found for that email.")
         db.execute("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", (hash_password(request.new_password), utc_now(), user["id"]))
+        db.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user["id"],))
     return {"message": "Password updated successfully."}
 
 @app.get("/auth/me")
@@ -203,6 +243,7 @@ def update_password(request: UpdatePasswordRequest, user: Annotated[dict, Depend
         if row is None or not verify_password(request.current_password, row["password_hash"]):
             raise HTTPException(status_code=400, detail="Your current password is incorrect.")
         db.execute("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", (hash_password(request.new_password), utc_now(), user["id"]))
+        db.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user["id"],))
 
 @app.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_file(user: Annotated[dict, Depends(current_user)], file: UploadFile = File(...)):

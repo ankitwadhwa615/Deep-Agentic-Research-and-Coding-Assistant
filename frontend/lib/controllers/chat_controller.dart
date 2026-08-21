@@ -17,9 +17,10 @@ class ChatController extends ChangeNotifier {
   String _newId() =>
       '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}-${Random.secure().nextInt(0xFFFFFFFF).toRadixString(16)}';
   Future<void> loadSessions() async {
-    if (_auth.token == null) return;
+    final token = await _auth.validToken();
+    if (token == null) return;
     try {
-      sessions = await _api.sessions(_auth.token!);
+      sessions = await _api.sessions(token);
       notifyListeners();
     } catch (_) {}
   }
@@ -34,12 +35,14 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<String?> uploadAttachment(Uint8List bytes, String filename) async {
-    if (_auth.token == null || uploading) return 'Please sign in first.';
+    if (uploading) return 'An upload is already in progress.';
+    final token = await _auth.validToken();
+    if (token == null) return 'Please sign in first.';
     uploading = true;
     notifyListeners();
     try {
       attachmentBytes = bytes;
-      attachment = await _api.upload(_auth.token!, bytes, filename);
+      attachment = await _api.upload(token, bytes, filename);
       return null;
     } on ApiException catch (error) {
       return error.message;
@@ -62,7 +65,9 @@ class ChatController extends ChangeNotifier {
     loading = true;
     notifyListeners();
     try {
-      messages = await _api.history(_auth.token!, session.id);
+      final token = await _auth.validToken();
+      if (token == null) throw const ApiException('Please sign in first.');
+      messages = await _api.history(token, session.id);
     } catch (_) {
       messages = [];
     }
@@ -77,7 +82,8 @@ class ChatController extends ChangeNotifier {
     final userMessage = ChatMessage('user', trimmedQuery,
         attachmentBytes: attachmentBytes, attachmentName: attachment?.filename);
     messages = [...messages, userMessage];
-    if (_auth.token == null) {
+    final token = await _auth.validToken();
+    if (token == null) {
       messages = [
         ...messages,
         ChatMessage('assistant', 'Please sign in before sending a message.')
@@ -93,7 +99,7 @@ class ChatController extends ChangeNotifier {
     var sent = false;
     try {
       await for (final event in _api.streamChat(
-          _auth.token!, trimmedQuery, sessionId!, attachment?.fileId)) {
+          token, trimmedQuery, sessionId!, attachment?.fileId)) {
         if (event.type == 'token' && event.data['source'] == 'main')
           reply.content += event.data['content'] as String? ?? '';
         if (event.type == 'delegation')

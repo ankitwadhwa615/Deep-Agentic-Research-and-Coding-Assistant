@@ -12,8 +12,8 @@ class UserProfile {
 }
 
 class AuthResult {
-  const AuthResult(this.token, this.user);
-  final String token;
+  const AuthResult(this.token, this.refreshToken, this.user);
+  final String token, refreshToken;
   final UserProfile user;
 }
 

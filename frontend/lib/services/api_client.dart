@@ -29,15 +29,29 @@ class ApiClient {
         headers: _headers(),
         body:
             jsonEncode({'name': name, 'email': email, 'password': password})));
-    return AuthResult(body['access_token'] as String,
-        UserProfile.fromJson(body['user'] as Map<String, dynamic>));
+    return _authResult(body);
   }
 
   Future<AuthResult> login(String email, String password) async {
     final body = await _json(await _client.post(_uri('/auth/login'),
         headers: _headers(),
         body: jsonEncode({'email': email, 'password': password})));
-    return AuthResult(body['access_token'] as String,
+    return _authResult(body);
+  }
+
+  Future<AuthResult> refresh(String refreshToken) async {
+    final body = await _json(await _client.post(_uri('/auth/refresh'),
+        headers: _headers(), body: jsonEncode({'refresh_token': refreshToken})));
+    return _authResult(body);
+  }
+
+  AuthResult _authResult(Map<String, dynamic> body) {
+    final refreshToken = body['refresh_token'];
+    if (refreshToken is! String || refreshToken.isEmpty) {
+      throw const ApiException(
+          'The agent service is running an older version. Deploy the backend token-refresh changes and try again.');
+    }
+    return AuthResult(body['access_token'] as String, refreshToken,
         UserProfile.fromJson(body['user'] as Map<String, dynamic>));
   }
 

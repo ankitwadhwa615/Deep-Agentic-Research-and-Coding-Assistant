@@ -26,10 +26,10 @@ flutter pub get
 flutter run
 ```
 
-The default API target is `http://10.0.2.2:8000`, the Android emulator's route to the host machine. Override it for a physical device, iOS simulator, desktop, or production deployment:
+The default API target is `https://deep-agentic-research-and-coding.onrender.com`. Override it when needed:
 
 ```bash
-flutter run --dart-define=API_BASE_URL=http://YOUR_HOST:8000
+flutter run --dart-define=API_BASE_URL=https://YOUR_API_HOST
 ```
 
-Use HTTPS for production. Android clear-text traffic is enabled only to support the default local FastAPI development server.
+Use HTTPS for production deployments.
