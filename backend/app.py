@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from graph import agent, model
 from groq import APIStatusError, RateLimitError
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 from tools.file_tool import UPLOADS_DIRECTORY
 from database import connection, initialize_database, utc_now
@@ -343,7 +344,7 @@ async def chat(request: ChatRequest, user: Annotated[dict, Depends(current_user)
     try:
         if is_image_request(request):
             result = await model.ainvoke(
-                {"messages": [{"role": "user", "content": build_message(request)}]}
+                [HumanMessage(content=build_message(request))]
             )
             response = get_text(result.content) or str(result.content)
             save_message(user["id"], request.session_id, "assistant", response)
@@ -404,7 +405,9 @@ async def stream_chat(request: ChatRequest, user: Annotated[dict, Depends(curren
 
         try:
             if is_image_request(request):
-                result = await model.ainvoke({"messages": [{"role": "user", "content": build_message(request)}]})
+                result = await model.ainvoke(
+                    [HumanMessage(content=build_message(request))]
+                )
                 response = get_text(result.content) or str(result.content)
                 save_message(user["id"], request.session_id, "assistant", response)
                 yield format_event("token", {"content": response, "source": "main"})
