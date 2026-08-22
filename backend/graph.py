@@ -14,7 +14,7 @@ checkpointer = InMemorySaver()
 load_dotenv()
 
 model = init_chat_model(
-    model="meta-llama/llama-4-scout-17b-16e-instruct",
+    model="openai/gpt-oss-120b",
     model_provider="groq",
     max_tokens=1024
 )

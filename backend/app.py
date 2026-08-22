@@ -116,6 +116,30 @@ def get_delegated_agents(messages):
 def format_event(event, data):
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
+
+def provider_error_response(error: APIStatusError) -> HTTPException:
+    """Do not mislabel every provider 4xx/5xx response as a context overflow."""
+    provider_status = getattr(error, "status_code", None)
+    provider_message = str(error).lower()
+    is_context_overflow = provider_status == 413 or any(
+        phrase in provider_message
+        for phrase in ("context length", "context window", "too large", "token limit")
+    )
+    logger.warning("Groq request rejected (status=%s): %s", provider_status, error)
+    if is_context_overflow:
+        return HTTPException(
+            status_code=413,
+            detail="The conversation is too large for the configured AI model. Start a new session or send a shorter request.",
+        )
+    return HTTPException(
+        status_code=502,
+        detail=(
+            "The AI provider rejected the request"
+            f" (HTTP {provider_status or 'unknown'}). Check the backend logs for details."
+        ),
+    )
+
+
 def get_text(content):
     if isinstance(content, str):
         return content
@@ -347,11 +371,7 @@ async def chat(request: ChatRequest, user: Annotated[dict, Depends(current_user)
             detail="The AI provider rate limit has been reached. Please try again shortly."
         ) from error
     except APIStatusError as error:
-        logger.warning("Groq request rejected: %s", error)
-        raise HTTPException(
-            status_code=413,
-            detail="The conversation is too large for the configured AI model. Start a new session or send a shorter request."
-        ) from error
+        raise provider_error_response(error) from error
     except Exception as error:
         logger.exception("Agent request failed")
         raise HTTPException(status_code=500, detail=f"Unable to process the request: {error}") from error
@@ -445,10 +465,7 @@ async def stream_chat(request: ChatRequest, user: Annotated[dict, Depends(curren
                 "detail": "The AI provider rate limit has been reached. Please try again shortly."
             })
         except APIStatusError as error:
-            logger.warning("Groq request rejected: %s", error)
-            yield format_event("error", {
-                "detail": "The conversation is too large for the configured AI model. Start a new session or send a shorter request."
-            })
+            yield format_event("error", {"detail": provider_error_response(error).detail})
         except Exception:
             logger.exception("Streaming agent request failed")
             yield format_event("error", {
