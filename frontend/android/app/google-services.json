@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "368984315537",
+    "project_id": "ankit-s-deep-agent",
+    "storage_bucket": "ankit-s-deep-agent.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:368984315537:android:784dcf711d7ea9e58d9130",
+        "android_client_info": {
+          "package_name": "com.ankit.ankit_agent"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCiR1BET6WtV4mRyBG0tLF660tt1z8YwZ4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

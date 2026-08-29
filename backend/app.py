@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from graph import agent, model
+from graph import agent, model, vision_model
 from groq import APIStatusError, RateLimitError
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
@@ -343,7 +343,7 @@ async def chat(request: ChatRequest, user: Annotated[dict, Depends(current_user)
 
     try:
         if is_image_request(request):
-            result = await model.ainvoke(
+            result = await vision_model.ainvoke(
                 [HumanMessage(content=build_message(request))]
             )
             response = get_text(result.content) or str(result.content)
@@ -405,7 +405,7 @@ async def stream_chat(request: ChatRequest, user: Annotated[dict, Depends(curren
 
         try:
             if is_image_request(request):
-                result = await model.ainvoke(
+                result = await vision_model.ainvoke(
                     [HumanMessage(content=build_message(request))]
                 )
                 response = get_text(result.content) or str(result.content)

@@ -1,5 +1,6 @@
 from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
+import os
 
 from agents.coder import coder_subagent
 from agents.researcher import research_subagent
@@ -14,9 +15,18 @@ checkpointer = InMemorySaver()
 load_dotenv()
 
 model = init_chat_model(
-    model="openai/gpt-oss-120b",
+    model=os.getenv("GROQ_TEXT_MODEL", "openai/gpt-oss-120b"),
     model_provider="groq",
     max_tokens=1024
+)
+
+# GPT-OSS is text-only. Use a multimodal Groq model for uploaded images.
+vision_model = init_chat_model(
+    model=os.getenv(
+        "GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"
+    ),
+    model_provider="groq",
+    max_tokens=1024,
 )
 
 agent = create_deep_agent(
