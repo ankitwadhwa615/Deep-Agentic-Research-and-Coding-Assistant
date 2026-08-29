@@ -304,60 +304,75 @@ class _MessageBubble extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 15),
             child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 650),
-                child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 13),
-                    decoration: BoxDecoration(
-                        color: isUser
-                            ? const Color(0xFF314238)
-                            : const Color(0xFF1B2622),
-                        borderRadius: BorderRadius.circular(18).copyWith(
-                            bottomRight:
-                                isUser ? const Radius.circular(4) : null,
-                            bottomLeft:
-                                !isUser ? const Radius.circular(4) : null),
-                        border: !isUser
-                            ? Border.all(color: const Color(0xFF2B3933))
-                            : null),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (message.attachmentBytes != null &&
-                              _isImageAttachment)
-                            ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Image.memory(message.attachmentBytes!,
-                                    width: 280,
-                                    height: 220,
-                                    fit: BoxFit.cover)),
-                          if (message.attachmentBytes != null &&
-                              !_isImageAttachment)
-                            Row(children: [
-                              const Icon(Icons.attach_file, size: 18),
-                              const SizedBox(width: 6),
-                              Flexible(
-                                  child: Text(message.attachmentName ??
-                                      'Attached file'))
-                            ]),
-                          if (message.attachmentBytes != null &&
-                              _isImageAttachment &&
-                              message.content.isNotEmpty)
-                            const SizedBox(height: 10),
-                          SelectableText.rich(
-                              message.content.isEmpty && message.streaming
-                                  ? const TextSpan(
-                                      text: 'Thinking…',
-                                      style: TextStyle(height: 1.45))
-                                  : _formattedText(context))
-                          ,
-                          if (!isUser && message.responseTime != null) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                                'Response time: ${_responseTimeLabel(message.responseTime!)}',
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 13),
+                          decoration: BoxDecoration(
+                              color: isUser
+                                  ? const Color(0xFF314238)
+                                  : const Color(0xFF1B2622),
+                              borderRadius: BorderRadius.circular(18).copyWith(
+                                  bottomRight:
+                                      isUser ? const Radius.circular(4) : null,
+                                  bottomLeft: !isUser
+                                      ? const Radius.circular(4)
+                                      : null),
+                              border: !isUser
+                                  ? Border.all(color: const Color(0xFF2B3933))
+                                  : null),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (message.attachmentBytes != null &&
+                                    _isImageAttachment)
+                                  ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.memory(
+                                          message.attachmentBytes!,
+                                          width: 280,
+                                          height: 220,
+                                          fit: BoxFit.cover)),
+                                if (message.attachmentBytes != null &&
+                                    !_isImageAttachment)
+                                  Row(children: [
+                                    const Icon(Icons.attach_file, size: 18),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                        child: Text(message.attachmentName ??
+                                            'Attached file'))
+                                  ]),
+                                if (message.attachmentBytes != null &&
+                                    _isImageAttachment &&
+                                    message.content.isNotEmpty)
+                                  const SizedBox(height: 10),
+                                SelectableText.rich(
+                                    message.content.isEmpty && message.streaming
+                                        ? const TextSpan(
+                                            text: 'Thinking…',
+                                            style: TextStyle(height: 1.45))
+                                        : _formattedText(context))
+                              ])),
+                      if (!isUser && !message.streaming) ...[
+                        const SizedBox(height: 3),
+                        Row(mainAxisSize: MainAxisSize.min, children: [
+                          IconButton(
+                              tooltip: 'Copy response',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: message.content.isEmpty
+                                  ? null
+                                  : () => Clipboard.setData(
+                                      ClipboardData(text: message.content)),
+                              icon: const Icon(Icons.copy_outlined, size: 19)),
+                          if (message.responseTime != null)
+                            Text(_responseTimeLabel(message.responseTime!),
                                 style: const TextStyle(
-                                    fontSize: 11, color: Color(0xFFB7C8BE)))
-                          ]
-                        ])))));
+                                    fontSize: 12, color: Color(0xFFB7C8BE)))
+                        ])
+                      ]
+                    ]))));
   }
 }
 

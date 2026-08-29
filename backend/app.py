@@ -15,7 +15,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from graph import agent, model, vision_model
 from groq import APIStatusError, RateLimitError
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 from tools.file_tool import UPLOADS_DIRECTORY
 from database import connection, initialize_database, utc_now
@@ -23,6 +22,12 @@ from security import (create_access_token, create_refresh_token, decode_access_t
                       hash_password, hash_refresh_token, verify_password)
 
 logger = logging.getLogger("uvicorn.error")
+
+# Keep enough recent turns for useful follow-up questions while maintaining a
+# predictable prompt size. Older turns stay in SQLite for the chat history UI.
+CONTEXT_HISTORY_MESSAGES = 12
+CONTEXT_MESSAGE_MAX_CHARS = 6_000
+CONTEXT_HISTORY_MAX_CHARS = 30_000
 
 class ChatRequest(BaseModel):
     query: str = Field(min_length=1, max_length=10000)
@@ -100,6 +105,36 @@ def save_message(user_id: str, session_id: str, role: str, content: str) -> None
     with connection() as db:
         db.execute("INSERT INTO chat_messages (id, session_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)", (str(uuid4()), session_id, user_id, role, content, now))
         db.execute("UPDATE chat_sessions SET updated_at = ?, title = CASE WHEN title = 'New chat' THEN ? ELSE title END WHERE id = ?", (now, content[:80], session_id))
+
+
+def conversation_context(user_id: str, session_id: str, current_content: object) -> list[dict]:
+    """Return a bounded recent conversation for one model invocation."""
+    with connection() as db:
+        rows = db.execute(
+            """SELECT role, content FROM chat_messages
+               WHERE session_id = ? AND user_id = ?
+               ORDER BY created_at DESC LIMIT ?""",
+            (session_id, user_id, CONTEXT_HISTORY_MESSAGES),
+        ).fetchall()
+
+    history = []
+    remaining = CONTEXT_HISTORY_MAX_CHARS
+    # Rows are newest first. Budget from newest to oldest so a long older reply
+    # never pushes the user's most recent turn out of the prompt.
+    for row in rows:
+        content = row["content"][-CONTEXT_MESSAGE_MAX_CHARS:]
+        if len(content) > remaining:
+            content = content[-remaining:]
+        if not content:
+            break
+        history.append({"role": row["role"], "content": content})
+        remaining -= len(content)
+        if remaining <= 0:
+            break
+
+    history.reverse()
+    history.append({"role": "user", "content": current_content})
+    return history
 
 def get_delegated_agents(messages):
     agents = []
@@ -339,32 +374,18 @@ async def chat(request: ChatRequest, user: Annotated[dict, Depends(current_user)
             upload = db.execute("SELECT id FROM uploads WHERE id = ? AND user_id = ?", (Path(request.file_id).name, user["id"])).fetchone()
         if upload is None:
             raise HTTPException(status_code=403, detail="Uploaded file not found or does not belong to you.")
+    message = build_message(request)
+    context = conversation_context(user["id"], request.session_id, message)
     save_message(user["id"], request.session_id, "user", request.query)
 
     try:
         if is_image_request(request):
-            result = await vision_model.ainvoke(
-                [HumanMessage(content=build_message(request))]
-            )
+            result = await vision_model.ainvoke(context)
             response = get_text(result.content) or str(result.content)
             save_message(user["id"], request.session_id, "assistant", response)
             return {"session_id": request.session_id, "response": response}
 
-        result = await agent.ainvoke(
-            {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": build_message(request)
-                    }
-                ]
-            },
-            config={
-                "configurable": {
-                    "thread_id": f"{user['id']}:{request.session_id}"
-                }
-            }
-        )
+        result = await agent.ainvoke({"messages": context})
     except RateLimitError as error:
         logger.warning("Groq rate limit reached: %s", error)
         raise HTTPException(
@@ -397,6 +418,8 @@ async def stream_chat(request: ChatRequest, user: Annotated[dict, Depends(curren
             upload = db.execute("SELECT id FROM uploads WHERE id = ? AND user_id = ?", (Path(request.file_id).name, user["id"])).fetchone()
         if upload is None:
             raise HTTPException(status_code=403, detail="Uploaded file not found or does not belong to you.")
+    message = build_message(request)
+    context = conversation_context(user["id"], request.session_id, message)
     save_message(user["id"], request.session_id, "user", request.query)
 
     async def generate():
@@ -405,28 +428,14 @@ async def stream_chat(request: ChatRequest, user: Annotated[dict, Depends(curren
 
         try:
             if is_image_request(request):
-                result = await vision_model.ainvoke(
-                    [HumanMessage(content=build_message(request))]
-                )
+                result = await vision_model.ainvoke(context)
                 response = get_text(result.content) or str(result.content)
                 save_message(user["id"], request.session_id, "assistant", response)
                 yield format_event("token", {"content": response, "source": "main"})
                 yield format_event("complete", {"agents": []})
                 return
             async for chunk in agent.astream(
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": build_message(request)
-                        }
-                    ]
-                },
-                config={
-                    "configurable": {
-                        "thread_id": f"{user['id']}:{request.session_id}"
-                    }
-                },
+                {"messages": context},
                 stream_mode=["messages", "updates"],
                 subgraphs=True,
                 version="v2"

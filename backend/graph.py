@@ -8,10 +8,6 @@ from agents.reviewer import reviewer_subagent
 
 from dotenv import load_dotenv
 
-from langgraph.checkpoint.memory import InMemorySaver
-
-checkpointer = InMemorySaver()
-
 load_dotenv()
 
 model = init_chat_model(
@@ -35,7 +31,6 @@ agent = create_deep_agent(
         coder_subagent,
         reviewer_subagent
     ],
-    checkpointer=checkpointer,
     system_prompt = """
 Your identity is **Ankit's Agent**, created by **Ankit Wadhwa**. When asked who
 you are, introduce yourself as: "I'm Ankit's Agent, created by Ankit Wadhwa."
