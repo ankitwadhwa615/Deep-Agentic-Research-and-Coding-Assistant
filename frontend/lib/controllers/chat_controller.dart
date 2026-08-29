@@ -75,6 +75,23 @@ class ChatController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<String?> deleteSession(ChatSession session) async {
+    if (streaming) return 'Wait for the current response to finish.';
+    final token = await _auth.validToken();
+    if (token == null) return 'Please sign in first.';
+    try {
+      await _api.deleteSession(token, session.id);
+      sessions = sessions.where((item) => item.id != session.id).toList();
+      if (sessionId == session.id) newChat();
+      notifyListeners();
+      return null;
+    } on ApiException catch (error) {
+      return error.message;
+    } catch (_) {
+      return 'Could not delete this chat. Please try again.';
+    }
+  }
+
   Future<void> send(String query) async {
     final trimmedQuery = query.trim();
     if (trimmedQuery.isEmpty || streaming) return;

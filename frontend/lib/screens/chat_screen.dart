@@ -132,6 +132,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 class _ChatDrawer extends ConsumerWidget {
   const _ChatDrawer({required this.user});
   final UserProfile user;
+
+  Future<void> _confirmDelete(
+      BuildContext context, WidgetRef ref, ChatSession session) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete this chat?'),
+        content: Text(
+            '“${session.title}” and all of its messages will be permanently deleted. This cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (shouldDelete != true || !context.mounted) return;
+
+    final error = await ref.read(chatProvider).deleteSession(session);
+    if (context.mounted && error != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final chat = ref.watch(chatProvider);
@@ -168,6 +199,12 @@ class _ChatDrawer extends ConsumerWidget {
                     title: Text(session.title,
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                     selected: session.id == chat.sessionId,
+                    trailing: IconButton(
+                        tooltip: 'Delete chat',
+                        onPressed: chat.streaming
+                            ? null
+                            : () => _confirmDelete(context, ref, session),
+                        icon: const Icon(Icons.delete_outline, size: 20)),
                     onTap: () {
                       ref.read(chatProvider).openSession(session);
                       Navigator.pop(context);

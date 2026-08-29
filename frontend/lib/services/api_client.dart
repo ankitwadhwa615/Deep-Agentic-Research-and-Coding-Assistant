@@ -40,7 +40,8 @@ class ApiClient {
 
   Future<AuthResult> refresh(String refreshToken) async {
     final body = await _json(await _client.post(_uri('/auth/refresh'),
-        headers: _headers(), body: jsonEncode({'refresh_token': refreshToken})));
+        headers: _headers(),
+        body: jsonEncode({'refresh_token': refreshToken})));
     return _authResult(body);
   }
 
@@ -81,6 +82,14 @@ class ApiClient {
       final json = value as Map<String, dynamic>;
       return ChatMessage(json['role'] as String, json['content'] as String);
     }).toList();
+  }
+
+  Future<void> deleteSession(String token, String id) async {
+    final response = await _client.delete(_uri('/chat/sessions/$id'),
+        headers: _headers(token));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(_detail(response.body));
+    }
   }
 
   Stream<ApiEvent> streamChat(
