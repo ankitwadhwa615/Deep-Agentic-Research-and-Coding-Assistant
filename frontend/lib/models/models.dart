@@ -19,12 +19,16 @@ class AuthResult {
 
 class ChatMessage {
   ChatMessage(this.role, this.content,
-      {this.streaming = false, this.attachmentBytes, this.attachmentName});
+      {this.streaming = false,
+      this.attachmentBytes,
+      this.attachmentName,
+      this.responseTime});
   final String role;
   String content;
   bool streaming;
   final Uint8List? attachmentBytes;
   final String? attachmentName;
+  Duration? responseTime;
 }
 
 class ChatSession {

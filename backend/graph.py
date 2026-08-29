@@ -20,11 +20,10 @@ model = init_chat_model(
     max_tokens=1024
 )
 
-# GPT-OSS is text-only. Use a multimodal Groq model for uploaded images.
+# GPT-OSS is text-only. Use a currently supported multimodal Groq model for
+# uploaded images. Llama 4 Scout was retired by Groq on July 17, 2026.
 vision_model = init_chat_model(
-    model=os.getenv(
-        "GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"
-    ),
+    model=os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b"),
     model_provider="groq",
     max_tokens=1024,
 )

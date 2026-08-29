@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import '../core/providers.dart';
 import '../models/models.dart';
@@ -287,6 +288,13 @@ class _MessageBubble extends StatelessWidget {
     return TextSpan(children: spans, style: baseStyle);
   }
 
+  String _responseTimeLabel(Duration duration) {
+    if (duration.inMilliseconds < 1000) {
+      return '${duration.inMilliseconds} ms';
+    }
+    return '${(duration.inMilliseconds / 1000).toStringAsFixed(1)} s';
+  }
+
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == 'user';
@@ -341,6 +349,14 @@ class _MessageBubble extends StatelessWidget {
                                       text: 'Thinking…',
                                       style: TextStyle(height: 1.45))
                                   : _formattedText(context))
+                          ,
+                          if (!isUser && message.responseTime != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                                'Response time: ${_responseTimeLabel(message.responseTime!)}',
+                                style: const TextStyle(
+                                    fontSize: 11, color: Color(0xFFB7C8BE)))
+                          ]
                         ])))));
   }
 }
@@ -397,18 +413,30 @@ class _Composer extends StatelessWidget {
                                 value: 'photo', child: Text('Choose photo'))
                           ]),
                   Expanded(
-                      child: TextField(
-                          controller: controller,
-                          minLines: 1,
-                          maxLines: 5,
-                          textInputAction: TextInputAction.newline,
-                          onSubmitted: (_) {
-                            if (!busy) onSend();
+                      child: Focus(
+                          onKeyEvent: (_, event) {
+                            if (event is KeyDownEvent &&
+                                event.logicalKey == LogicalKeyboardKey.enter &&
+                                !HardwareKeyboard.instance.isShiftPressed) {
+                              if (!busy && controller.text.trim().isNotEmpty) {
+                                onSend();
+                              }
+                              return KeyEventResult.handled;
+                            }
+                            return KeyEventResult.ignored;
                           },
-                          decoration: const InputDecoration(
-                              hintText: 'Message Ankit’s Agent',
-                              fillColor: Colors.transparent,
-                              border: InputBorder.none))),
+                          child: TextField(
+                              controller: controller,
+                              minLines: 1,
+                              maxLines: 5,
+                              textInputAction: TextInputAction.send,
+                              onSubmitted: (_) {
+                                if (!busy) onSend();
+                              },
+                              decoration: const InputDecoration(
+                                  hintText: 'Message Ankit’s Agent',
+                                  fillColor: Colors.transparent,
+                                  border: InputBorder.none)))),
                   Padding(
                       padding: const EdgeInsets.all(6),
                       child: IconButton(

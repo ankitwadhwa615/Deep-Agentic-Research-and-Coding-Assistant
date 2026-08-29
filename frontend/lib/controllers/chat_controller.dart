@@ -96,7 +96,7 @@ class ChatController extends ChangeNotifier {
     streaming = true;
     activeAgent = null;
     notifyListeners();
-    var sent = false;
+    final stopwatch = Stopwatch()..start();
     try {
       await for (final event in _api.streamChat(
           token, trimmedQuery, sessionId!, attachment?.fileId)) {
@@ -111,19 +111,22 @@ class ChatController extends ChangeNotifier {
         notifyListeners();
       }
       reply.streaming = false;
-      sent = true;
+      reply.responseTime = stopwatch.elapsed;
       await loadSessions();
     } on ApiException catch (error) {
       reply.content = reply.content.isEmpty
           ? 'Sorry, $error'
           : '${reply.content}\n\n_${error}_';
       reply.streaming = false;
+      reply.responseTime = stopwatch.elapsed;
     } catch (_) {
       reply.content = reply.content.isEmpty
           ? 'Sorry, the stream disconnected. Please try again.'
           : reply.content;
       reply.streaming = false;
+      reply.responseTime = stopwatch.elapsed;
     } finally {
+      stopwatch.stop();
       streaming = false;
       activeAgent = null;
       attachment = null;

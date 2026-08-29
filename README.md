@@ -170,8 +170,7 @@ For production, use HTTPS and configure `CORS_ORIGIN_REGEX` on the backend.
 
 ## Design Notes
 
-- Native clients use the SSE endpoint for incremental responses.
-- Flutter Web uses the JSON chat endpoint because browser streaming behavior varies across environments.
+- All Flutter clients use the SSE endpoint for incremental responses.
 - Uploaded images are sent to the vision-capable model as multimodal content.
 - PDFs and DOCX files are stored as attachments and routed through the uploaded-file processing path.
 - Conversation checkpoints use an in-memory LangGraph saver; durable conversation history is stored in SQLite.
@@ -187,4 +186,3 @@ For production, use HTTPS and configure `CORS_ORIGIN_REGEX` on the backend.
 ## Portfolio Summary
 
 Ankit's Agent is designed to show how an AI Developer turns LLM capabilities into a usable product: a polished cross-platform client, validated API boundaries, persistent user workflows, specialist agent routing, multimodal inputs, and practical operational safeguards.
-
