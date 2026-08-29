@@ -1,5 +1,4 @@
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -276,7 +275,7 @@ class _MessageBubble extends StatelessWidget {
   }
 
   TextSpan _formattedText(BuildContext context) {
-    final baseStyle = const TextStyle(height: 1.45);
+    const baseStyle = TextStyle(height: 1.45);
     final headingStyle = baseStyle.copyWith(
         fontSize: 18, fontWeight: FontWeight.w700, height: 1.35);
     final boldStyle = baseStyle.copyWith(fontWeight: FontWeight.w700);

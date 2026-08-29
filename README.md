@@ -19,14 +19,14 @@ This project demonstrates the work of an AI Developer who can:
 
 - Email/password registration and login with JWT authentication.
 - Inline form validation and disabled states for invalid auth input.
-- Password reset endpoint and UI flow.
+- Password-change endpoint plus a password-reset API endpoint.
 - Persistent user sessions using Flutter `shared_preferences`.
 - New conversations, saved sessions, and message history.
 - Research, coding, review, and general-purpose specialist agents.
 - Delegation status updates during agent execution.
-- Streaming responses on native platforms.
-- Standard JSON chat fallback for Flutter Web.
-- Upload support for text files, PDFs, DOCX files, and images.
+- Server-Sent Events (SSE) responses with live delegation status in the Flutter client.
+- A non-streaming JSON chat endpoint for integrations or clients that do not use SSE.
+- Upload support for UTF-8 text-based files, PDFs, and images.
 - Image previews in chat and direct vision-model analysis.
 - Lightweight Markdown-style rendering for headings, bold, italics, bullets, and dividers.
 - SQLite persistence for users, sessions, messages, and uploads.
@@ -68,6 +68,7 @@ Agent Runtime
 - `http` for REST and streaming requests
 - `shared_preferences` for local auth persistence
 - `file_picker` and `image_picker` for attachments
+- Firebase Core initialization and Firebase Hosting configuration
 - Responsive Material 3 UI
 
 ### Backend
@@ -77,7 +78,7 @@ Agent Runtime
 - Pydantic request validation
 - SQLite with a small context-managed data layer
 - JWT bearer authentication
-- Password hashing with Werkzeug security helpers
+- PBKDF2-SHA256 password hashing with per-password salts
 - Multipart upload handling
 - CORS middleware
 
@@ -119,6 +120,7 @@ Agent Runtime
 
 - `POST /auth/register`
 - `POST /auth/login`
+- `POST /auth/refresh`
 - `GET /auth/me`
 - `PATCH /auth/password`
 - `POST /auth/forgot-password`
@@ -128,10 +130,11 @@ Agent Runtime
 - `POST /upload`
 - `GET /chat/sessions`
 - `GET /chat/sessions/{session_id}/history`
+- `DELETE /chat/sessions/{session_id}`
 - `POST /chat`
 - `POST /chat/stream`
 
-All chat, history, and upload requests require a bearer token.
+`/health` is available for service checks. All chat, session, history, and upload requests require a bearer token. Login, registration, and token refresh return an access/refresh token pair; refresh tokens are stored server-side only as keyed hashes and rotated on use.
 
 ## Local Development
 
@@ -150,7 +153,10 @@ Configure the required provider credentials in `backend/.env`, for example:
 ```env
 GROQ_API_KEY=your_groq_api_key
 TAVILY_API_KEY=your_tavily_api_key
+JWT_SECRET=replace-with-a-long-random-secret
 ```
+
+Optional backend configuration includes `GROQ_TEXT_MODEL`, `GROQ_VISION_MODEL`, `ACCESS_TOKEN_EXPIRES_MINUTES`, `REFRESH_TOKEN_EXPIRES_DAYS`, and `CORS_ORIGIN_REGEX`. Set `JWT_SECRET` in every persistent deployment; without it, a restart invalidates existing tokens.
 
 ### 2. Start Flutter
 
@@ -166,13 +172,13 @@ Override the API URL when running on a physical device, emulator, or deployed en
 flutter run --dart-define=API_BASE_URL=http://YOUR_HOST:8000
 ```
 
-For production, use HTTPS and configure `CORS_ORIGIN_REGEX` on the backend.
+The checked-in default API URL targets the deployed Render service. Firebase configuration is included for Android, iOS, macOS, Web, and Windows; use a Firebase configuration for your own project before distributing a fork. For production, use HTTPS and configure `CORS_ORIGIN_REGEX` on the backend.
 
 ## Design Notes
 
-- All Flutter clients use the SSE endpoint for incremental responses.
+- The Flutter client uses the SSE endpoint for incremental responses; `/chat` provides the equivalent non-streaming JSON response.
 - Uploaded images are sent to the vision-capable model as multimodal content.
-- PDFs and DOCX files are stored as attachments and routed through the uploaded-file processing path.
+- PDFs are text-extracted with `pypdf`; text-based files are decoded as UTF-8. Other binary file types can be uploaded but are not meaningfully parsed by the current file-reading tool.
 - Conversation checkpoints use an in-memory LangGraph saver; durable conversation history is stored in SQLite.
 
 ## Security Notes
@@ -181,7 +187,7 @@ For production, use HTTPS and configure `CORS_ORIGIN_REGEX` on the backend.
 - Authenticated resources are scoped to the current user.
 - Upload ownership is checked before a file is used in a chat request.
 - Do not commit `.env` files, API keys, production databases, or uploaded user files.
-- The current password-reset flow directly updates the password after email lookup; a production deployment should replace this with a time-limited, email-delivered reset token.
+- The current password-reset API directly updates a password after email lookup, and its UI trigger is not enabled. A production deployment should replace it with a time-limited, email-delivered reset token.
 
 ## Portfolio Summary
 
