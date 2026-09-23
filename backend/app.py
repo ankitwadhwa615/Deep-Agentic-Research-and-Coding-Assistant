@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi import Request, Response
 from graph import agent, model, vision_model
 from groq import APIStatusError, RateLimitError
 from pydantic import BaseModel, Field
@@ -337,6 +338,10 @@ def health():
     return {
         "status": "healthy"
     }
+  
+@app.head("/health")
+def health_head():
+    return Response(status_code=200)
 
 @app.get("/chat/sessions")
 def list_chat_sessions(user: Annotated[dict, Depends(current_user)]):
